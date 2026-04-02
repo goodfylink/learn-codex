@@ -57,11 +57,11 @@ struct Choice {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let api_key = env::var("OPENAI_API_KEY")
-        .unwrap_or_else(|_| "sk-528eeea3c85d483a85882cfca787ce78".to_string());
+        .unwrap_or_else(|_| "".to_string());
     let base_url = env::var("OPENAI_BASE_URL").unwrap_or_else(|_| {
-        "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions".to_string()
+        "".to_string()
     });
-    let model_name = env::var("OPENAI_MODEL_NAME").unwrap_or_else(|_| "qwen3.5-plus".to_string());
+    let model_name = env::var("OPENAI_MODEL_NAME").unwrap_or_else(|_| "".to_string());
 
     let client = Client::new();
 

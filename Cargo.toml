@@ -1,0 +1,52 @@
+[package]
+name = "demo"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "demo"
+path = "src/main.rs"
+
+[[bin]]
+name = "step01"
+path = "src/examples/step01/step01.rs"
+
+[[bin]]
+name = "step02"
+path = "src/examples/step02/step02.rs"
+
+[[bin]]
+name = "step03"
+path = "src/examples/step03/step03.rs"
+
+[[bin]]
+name = "step04"
+path = "src/examples/step04/step04.rs"
+
+[[bin]]
+name = "step05"
+path = "src/examples/step05/step05.rs"
+
+[[bin]]
+name = "step06"
+path = "src/examples/step06/step06.rs"
+
+[[bin]]
+name = "step07"
+path = "src/examples/step07/step07.rs"
+
+[[bin]]
+name = "step08"
+path = "src/examples/step08/step08.rs"
+
+[[bin]]
+name = "step09"
+path = "src/examples/step09/step09.rs"
+
+[dependencies]
+tokio = { version = "1.37.0", features = ["full"] }
+reqwest = { version = "0.12", features = ["json"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+regex = "1.10.4"
+async-trait = "0.1"

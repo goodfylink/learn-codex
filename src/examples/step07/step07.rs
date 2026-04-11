@@ -70,6 +70,97 @@ struct Choice {
 
 const DEMO_SUPPORTS_PARALLEL_TOOL_CALLS: bool = true;
 
+const COMPACTION_CHAR_THRESHOLD: usize = 20_000;
+const COMPACTION_KEEP_RECENT_USER_TURNS: usize = 2;
+const COMPACTION_TOOL_TEXT_CHARS: usize = 1_200;
+const COMPACTION_SUMMARY_PREFIX: &str =
+    "Previously in this conversation (Summary generated during compaction):";
+
+fn truncate_for_compaction(text: &str, max_chars: usize) -> String {
+    let char_count = text.chars().count();
+    if char_count <= max_chars {
+        return text.to_string();
+    }
+
+    let keep_each_side = max_chars / 2;
+    let prefix = text.chars().take(keep_each_side).collect::<String>();
+    let suffix = text
+        .chars()
+        .rev()
+        .take(keep_each_side)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<String>();
+    let omitted_chars = char_count.saturating_sub(prefix.chars().count() + suffix.chars().count());
+
+    format!("{prefix}\n\n... [TRUNCATED {omitted_chars} CHARACTERS] ...\n\n{suffix}")
+}
+
+fn find_recent_history_start(history: &[Message], keep_recent_user_turns: usize) -> usize {
+    let mut seen_user_turns = 0usize;
+    for index in (1..history.len()).rev() {
+        if history[index].role == "user" {
+            seen_user_turns += 1;
+            if seen_user_turns == keep_recent_user_turns {
+                return index;
+            }
+        }
+    }
+
+    1
+}
+
+fn sanitize_message_for_compaction(message: &Message) -> Option<Message> {
+    match message.role.as_str() {
+        "user" => message.content.as_ref().and_then(|content| {
+            (!content.trim().is_empty()).then(|| Message {
+                role: "user".to_string(),
+                content: Some(content.clone()),
+                tool_calls: None,
+                tool_call_id: None,
+            })
+        }),
+        "assistant" => {
+            let content = if let Some(content) = message.content.as_ref() {
+                if !content.trim().is_empty() {
+                    Some(content.clone())
+                } else {
+                    None
+                }
+            } else if let Some(tool_calls) = message.tool_calls.as_ref() {
+                let tool_names = tool_calls
+                    .iter()
+                    .map(|tool_call| tool_call.function.name.as_str())
+                    .collect::<Vec<_>>();
+                (!tool_names.is_empty())
+                    .then(|| format!("Assistant requested tool calls: {}", tool_names.join(", ")))
+            } else {
+                None
+            };
+
+            content.map(|content| Message {
+                role: "assistant".to_string(),
+                content: Some(content),
+                tool_calls: None,
+                tool_call_id: None,
+            })
+        }
+        "tool" => message.content.as_ref().and_then(|content| {
+            (!content.trim().is_empty()).then(|| Message {
+                role: "assistant".to_string(),
+                content: Some(format!(
+                    "Observed tool result:\n{}",
+                    truncate_for_compaction(content, COMPACTION_TOOL_TEXT_CHARS)
+                )),
+                tool_calls: None,
+                tool_call_id: None,
+            })
+        }),
+        _ => None,
+    }
+}
+
 async fn compact_history(
     client: &Client,
     api_key: &str,
@@ -82,8 +173,7 @@ async fn compact_history(
         .map(|m| m.content.as_ref().map(|c| c.len()).unwrap_or(0))
         .sum();
 
-    // Threshold: 20k characters
-    if total_chars < 20000 || history.len() <= 6 {
+    if total_chars < COMPACTION_CHAR_THRESHOLD || history.len() <= 6 {
         return Ok(());
     }
 
@@ -92,12 +182,23 @@ async fn compact_history(
         total_chars
     );
 
-    // Preserve the system prompt and the most recent interaction window.
     let system_message = history[0].clone();
-    let recent_messages = history[history.len() - 5..].to_vec();
-    let to_summarize = history[1..history.len() - 5].to_vec();
+    let recent_start = find_recent_history_start(history, COMPACTION_KEEP_RECENT_USER_TURNS);
+    let recent_messages = history[recent_start..].to_vec();
+    let to_summarize = history[1..recent_start].to_vec();
 
     let summarization_prompt = "Summarize the following conversation history briefly while preserving key facts, user intents, and important tool outputs. Focus on maintaining context for the next steps.";
+    let sanitized_history = to_summarize
+        .iter()
+        .filter_map(sanitize_message_for_compaction)
+        .collect::<Vec<_>>();
+
+    if sanitized_history.is_empty() {
+        println!(
+            "[context] history is long but no compactable history exists before the retained recent turns"
+        );
+        return Ok(());
+    }
 
     let mut summary_request_history = vec![Message {
         role: "system".to_string(),
@@ -105,7 +206,7 @@ async fn compact_history(
         tool_calls: None,
         tool_call_id: None,
     }];
-    summary_request_history.extend(to_summarize);
+    summary_request_history.extend(sanitized_history);
 
     let payload = json!({
         "model": model_name,
@@ -133,10 +234,7 @@ async fn compact_history(
 
         let summary_message = Message {
             role: "system".to_string(),
-            content: Some(format!(
-                "Previously in this conversation (Summary):\n{}",
-                summary_text
-            )),
+            content: Some(format!("{COMPACTION_SUMMARY_PREFIX}\n{summary_text}")),
             tool_calls: None,
             tool_call_id: None,
         };
@@ -145,7 +243,14 @@ async fn compact_history(
         new_history.extend(recent_messages);
         *history = new_history;
     } else {
-        println!("[context] compaction failed; continuing with full history");
+        let status = res.status();
+        let body = res
+            .text()
+            .await
+            .unwrap_or_else(|_| "<empty response body>".to_string());
+        println!("[context] compaction failed (status: {status})");
+        println!("[context] response body: {body}");
+        println!("[context] continuing with full history");
     }
 
     Ok(())
@@ -217,11 +322,8 @@ async fn execute_tool_calls(
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let api_key = env::var("OPENAI_API_KEY")
-        .unwrap_or_else(|_| "your-api_key".to_string());
-    let base_url = env::var("OPENAI_BASE_URL").unwrap_or_else(|_| {
-        "your-base_url".to_string()
-    });
+    let api_key = env::var("OPENAI_API_KEY").unwrap_or_else(|_| "your-api_key".to_string());
+    let base_url = env::var("OPENAI_BASE_URL").unwrap_or_else(|_| "your-base_url".to_string());
     let model_name = env::var("OPENAI_MODEL_NAME").unwrap_or_else(|_| "your-model".to_string());
 
     let client = Client::new();

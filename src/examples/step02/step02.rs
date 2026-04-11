@@ -55,11 +55,8 @@ struct Choice {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let api_key = env::var("OPENAI_API_KEY")
-        .unwrap_or_else(|_| "your-api_key".to_string());
-    let base_url = env::var("OPENAI_BASE_URL").unwrap_or_else(|_| {
-        "your-base_url".to_string()
-    });
+    let api_key = env::var("OPENAI_API_KEY").unwrap_or_else(|_| "your-api_key".to_string());
+    let base_url = env::var("OPENAI_BASE_URL").unwrap_or_else(|_| "your-base_url".to_string());
     let model_name = env::var("OPENAI_MODEL_NAME").unwrap_or_else(|_| "your-model".to_string());
 
     let client = Client::new();

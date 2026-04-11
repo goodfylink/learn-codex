@@ -47,10 +47,12 @@ In one sentence:
 When history becomes too long, `compact_history`:
 
 - keeps the system prompt
-- keeps the most recent interaction window
-- summarizes older conversation into a compact message
+- keeps the most recent two complete user turns
+- converts older history into a safer summarization input
+- degrades tool calls and tool outputs into plain-text observations before summarizing
+- prints the real status code and response body when compaction fails
 
-This is a simplified long-context management strategy.
+This is still simplified, but it is much closer to the Codex approach: sanitize the old history first, then rebuild a shorter replacement history instead of summarizing raw tool-call messages directly.
 
 ### 2. Skill injection
 
@@ -79,6 +81,10 @@ Read src/examples/step05/step05.rs and explain how skill injection works.
 
 ```text
 I am going to give you a lot of information across multiple messages. Keep the context and continue the task afterward.
+```
+
+```text
+Read several files and use a few tools first, then once the conversation becomes long, summarize what we have already done.
 ```
 
 ## One-line summary
